@@ -21,7 +21,8 @@
 /*=========================
    STDLIB WRAPPER SETTINGS
  *=========================*/
-#define LV_USE_STDLIB_MALLOC    LV_STDLIB_BUILTIN
+/* Use custom allocators so LVGL heap lives in PSRAM, not SRAM */
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CUSTOM
 #define LV_USE_STDLIB_STRING    LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_BUILTIN
 
@@ -33,13 +34,20 @@
 #define LV_STDARG_INCLUDE       <stdarg.h>
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
-    #define LV_MEM_SIZE (128 * 1024U)          /*[bytes] — increased from 64K*/
+    #define LV_MEM_SIZE (128 * 1024U)
     #define LV_MEM_POOL_EXPAND_SIZE 0
     #define LV_MEM_ADR 0
     #if LV_MEM_ADR == 0
         #undef LV_MEM_POOL_INCLUDE
         #undef LV_MEM_POOL_ALLOC
     #endif
+#elif LV_USE_STDLIB_MALLOC == LV_STDLIB_CUSTOM
+    /* Route LVGL heap to PSRAM — frees ~128 KB of internal SRAM */
+    #define LV_MEM_CUSTOM_INCLUDE   <esp_heap_caps.h>
+    #define LV_MEM_CUSTOM_ALLOC(sz)         heap_caps_malloc(sz,   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+    #define LV_MEM_CUSTOM_REALLOC(ptr, sz)  heap_caps_realloc(ptr, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+    #define LV_MEM_CUSTOM_FREE(ptr)         free(ptr)
+    #define LV_MEM_CUSTOM_GET_SIZE(ptr)     0  /* not needed */
 #endif
 
 /*====================
