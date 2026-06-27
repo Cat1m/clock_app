@@ -3,6 +3,7 @@
  * Dark blue-tech theme: cyan time, steel-blue date, amber AM/PM.
  */
 #include "ui_lvgl.h"
+#include "ui_fonts.h"
 #include "lvgl_port.h"
 #include "lvgl.h"
 #include <stdio.h>
@@ -171,32 +172,28 @@ void ui_lvgl_init(ui_mode_cb_t on_mode, ui_brt_cb_t on_brt,
     s_btn_brt_m = make_sbar_btn(sbar, "-", on_btn_brt_m);
     lv_obj_align_to(s_btn_brt_m, s_lbl_brt, LV_ALIGN_OUT_LEFT_MID, -12, 0);
 
-    /* ── Time label — font 48 scaled 2× → ~100px tall ───────────────── */
+    /* ── Time label — custom font 128pt, native (no scale) ──────────── */
     s_lbl_time = lv_label_create(scr);
     lv_label_set_text(s_lbl_time, "--:--:--");
-    lv_obj_set_style_text_font(s_lbl_time, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(s_lbl_time, &lv_font_clock_128, 0);
     lv_obj_set_style_text_color(s_lbl_time, lv_color_hex(0x00BFFF), 0);
-    lv_obj_set_style_text_letter_space(s_lbl_time, 2, 0);
-    lv_obj_set_style_transform_scale_x(s_lbl_time, 512, 0);  /* 512/256 = 2× */
-    lv_obj_set_style_transform_scale_y(s_lbl_time, 512, 0);
-    lv_obj_align(s_lbl_time, LV_ALIGN_TOP_MID, 0, 150);
+    lv_obj_set_style_text_letter_space(s_lbl_time, 4, 0);
+    lv_obj_align(s_lbl_time, LV_ALIGN_CENTER, 0, -68);
 
-    /* ── Date label — font 36 scaled 1.5× → ~55px tall ─────────────── */
+    /* ── Date label — custom font 48pt, native (no scale) ───────────── */
     s_lbl_date = lv_label_create(scr);
     lv_label_set_text(s_lbl_date, "--- -- --- ----");
-    lv_obj_set_style_text_font(s_lbl_date, &lv_font_montserrat_36, 0);
+    lv_obj_set_style_text_font(s_lbl_date, &lv_font_date_48, 0);
     lv_obj_set_style_text_color(s_lbl_date, lv_color_hex(0x4E9FE0), 0);
     lv_obj_set_style_text_letter_space(s_lbl_date, 2, 0);
-    lv_obj_set_style_transform_scale_x(s_lbl_date, 384, 0);  /* 384/256 = 1.5× */
-    lv_obj_set_style_transform_scale_y(s_lbl_date, 384, 0);
-    lv_obj_align(s_lbl_date, LV_ALIGN_TOP_MID, 0, 300);
+    lv_obj_align(s_lbl_date, LV_ALIGN_CENTER, 0, +80);
 
-    /* ── AM/PM label (12H mode only) ──────────────────────────────────── */
+    /* ── AM/PM label (12H mode only) — 36pt, inline after date ──────── */
     s_lbl_ampm = lv_label_create(scr);
     lv_label_set_text(s_lbl_ampm, "AM");
     lv_obj_set_style_text_font(s_lbl_ampm, &lv_font_montserrat_36, 0);
     lv_obj_set_style_text_color(s_lbl_ampm, lv_color_hex(0xFFA040), 0);
-    lv_obj_align(s_lbl_ampm, LV_ALIGN_TOP_MID, 0, 390);
+    lv_obj_align(s_lbl_ampm, LV_ALIGN_CENTER, 0, +148);
     lv_obj_add_flag(s_lbl_ampm, LV_OBJ_FLAG_HIDDEN);  /* shown when 12H active */
 
     /* ── Bottom button bar ───────────────────────────────────────────── */

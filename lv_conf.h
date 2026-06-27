@@ -42,18 +42,13 @@
         #undef LV_MEM_POOL_ALLOC
     #endif
 #elif LV_USE_STDLIB_MALLOC == LV_STDLIB_CUSTOM
-    /* Route LVGL heap to PSRAM — frees ~128 KB of internal SRAM */
-    #define LV_MEM_CUSTOM_INCLUDE   <esp_heap_caps.h>
-    #define LV_MEM_CUSTOM_ALLOC(sz)         heap_caps_malloc(sz,   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
-    #define LV_MEM_CUSTOM_REALLOC(ptr, sz)  heap_caps_realloc(ptr, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
-    #define LV_MEM_CUSTOM_FREE(ptr)         free(ptr)
-    #define LV_MEM_CUSTOM_GET_SIZE(ptr)     0  /* not needed */
+    /* LVGL v9: không dùng macro — implement lv_malloc_core/lv_realloc_core/lv_free_core trong src/lv_mem_psram.cpp */
 #endif
 
 /*====================
    HAL SETTINGS
  *====================*/
-#define LV_DEF_REFR_PERIOD  33      /*[ms]*/
+#define LV_DEF_REFR_PERIOD  100     /*[ms] — clock app ~2fps, 10fps đủ dùng, tiết kiệm CPU*/
 #define LV_DPI_DEF 130
 
 /*=================
@@ -88,7 +83,7 @@
     #define LV_DRAW_SW_SUPPORT_AL88         1
     #define LV_DRAW_SW_SUPPORT_A8           1
     #define LV_DRAW_SW_SUPPORT_I1           1
-    #define LV_DRAW_SW_DRAW_UNIT_CNT    1
+    #define LV_DRAW_SW_DRAW_UNIT_CNT    1   /* phải giữ =1 khi LV_USE_OS=LV_OS_NONE; >1 cần OS mutex */
     #define LV_USE_DRAW_ARM2D_SYNC      0
     #define LV_USE_NATIVE_HELIUM_ASM    0
     #define LV_DRAW_SW_COMPLEX          1
@@ -234,26 +229,14 @@
 #define LV_USE_BAR        1
 #define LV_USE_BUTTON        1
 #define LV_USE_BUTTONMATRIX  1
-#define LV_USE_CALENDAR   1
-#if LV_USE_CALENDAR
-    #define LV_CALENDAR_WEEK_STARTS_MONDAY 0
-    #if LV_CALENDAR_WEEK_STARTS_MONDAY
-        #define LV_CALENDAR_DEFAULT_DAY_NAMES {"Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"}
-    #else
-        #define LV_CALENDAR_DEFAULT_DAY_NAMES {"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"}
-    #endif
-    #define LV_CALENDAR_DEFAULT_MONTH_NAMES {"January", "February", "March",  "April", "May",  "June", "July", "August", "September", "October", "November", "December"}
-    #define LV_USE_CALENDAR_HEADER_ARROW 1
-    #define LV_USE_CALENDAR_HEADER_DROPDOWN 1
-    #define LV_USE_CALENDAR_CHINESE 0
-#endif
+#define LV_USE_CALENDAR   0  /* không dùng trong clock app */
 #define LV_USE_CANVAS     1
-#define LV_USE_CHART      1
+#define LV_USE_CHART      0  /* không dùng trong clock app */
 #define LV_USE_CHECKBOX   1
 #define LV_USE_DROPDOWN   1
 #define LV_USE_IMAGE      1
 #define LV_USE_IMAGEBUTTON     1
-#define LV_USE_KEYBOARD   1
+#define LV_USE_KEYBOARD   0  /* không dùng trong clock app */
 #define LV_USE_LABEL      1
 #if LV_USE_LABEL
     #define LV_LABEL_TEXT_SELECTION 1
@@ -273,13 +256,10 @@
 #if LV_USE_SPAN
     #define LV_SPAN_SNIPPET_STACK_SIZE 64
 #endif
-#define LV_USE_SPINBOX    1
+#define LV_USE_SPINBOX    0  /* không dùng trong clock app */
 #define LV_USE_SPINNER    1
 #define LV_USE_SWITCH     1
-#define LV_USE_TEXTAREA   1
-#if LV_USE_TEXTAREA != 0
-    #define LV_TEXTAREA_DEF_PWD_SHOW_TIME 1500
-#endif
+#define LV_USE_TEXTAREA   0  /* không dùng trong clock app */
 #define LV_USE_TABLE      1
 #define LV_USE_TABVIEW    1
 #define LV_USE_TILEVIEW   1
@@ -374,7 +354,7 @@
 /*==================
 * EXAMPLES
 *==================*/
-#define LV_BUILD_EXAMPLES 1
+#define LV_BUILD_EXAMPLES 0
 
 /*===================
  * DEMO USAGE
