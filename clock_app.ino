@@ -1,6 +1,5 @@
 // NTP Digital Clock — ESP32-P4, JD9165 1024×600, GT911 touch, Ethernet
-// No LVGL — direct PSRAM framebuffer, 7-segment blue-tech style.
-// Touch: tap 12H / 24H buttons at bottom; tap − / + in status bar for brightness.
+// UI: LVGL v9, dark blue-tech theme, cyan time, 12H/24H buttons, brightness ±.
 #include <Arduino.h>
 #include "esp_sleep.h"
 #include "esp_lcd_panel_ops.h"
@@ -16,7 +15,8 @@
 #include "src/esp_lcd_jd9165.h"
 #include "src/esp_lcd_touch_gt911.h"
 #include "src/eth_driver.h"
-#include "src/ui.h"
+#include "src/lvgl_port.h"
+#include "src/ui_lvgl.h"
 
 // ---- Pin / peripheral constants ---------------------------------------------
 #define BSP_LCD_RST         GPIO_NUM_5
@@ -33,29 +33,11 @@
 #define TIMEZONE_STR        "ICT-7"
 #define NTP_SERVER          "pool.ntp.org"
 #define NTP_SYNC_TIMEOUT_S  15
-#define LOOP_DELAY_MS       500   // ~2 fps
+#define LOOP_DELAY_MS       500
 
-// Touch debounce
-#define DEBOUNCE_MODE_MS    400   // mode buttons
-#define DEBOUNCE_BRT_MS     150   // brightness buttons (allow repeated taps)
-
-// Brightness
 #define BRT_MIN     1
 #define BRT_MAX     10
 #define BRT_DEFAULT 8
-
-// Touch zone coordinates (mirror of ui.cpp layout)
-#define BTN_Y       510
-#define BTN_H       85
-#define BTN_12H_X1  100
-#define BTN_12H_X2  450
-#define BTN_24H_X1  574
-#define BTN_24H_X2  924
-#define SBAR_H      46
-#define BRT_MINUS_X1 680
-#define BRT_MINUS_X2 720
-#define BRT_PLUS_X1  934
-#define BRT_PLUS_X2  974
 
 // ---- LP GPIO fix — must run before initArduino() ---------------------------
 __attribute__((constructor(200))) static void early_lp_periph_on() {
@@ -65,12 +47,9 @@ __attribute__((constructor(200))) static void early_lp_periph_on() {
 // ---- Globals ----------------------------------------------------------------
 static esp_lcd_panel_handle_t s_panel     = NULL;
 static esp_lcd_touch_handle_t s_tp        = NULL;
-static uint16_t              *s_fb        = NULL;
-static uint8_t                s_mode_12h  = 0;          // 0=24h, 1=12h
-static uint8_t                s_brightness = BRT_DEFAULT; // 1-10
+static uint8_t                s_mode_12h  = 0;
+static uint8_t                s_brightness = BRT_DEFAULT;
 static volatile bool          s_ntp_synced = false;
-static unsigned long          s_last_mode_ms = 0;
-static unsigned long          s_last_brt_ms  = 0;
 
 // ---- NVS helpers ------------------------------------------------------------
 static void nvs_init_clock() {
@@ -102,9 +81,29 @@ static uint8_t load_u8(const char *key, uint8_t def) {
 
 // ---- Backlight PWM ----------------------------------------------------------
 static void set_backlight(uint8_t level) {
-    // level 1-10 → PWM 102-1023
     uint32_t pwm = (uint32_t)level * 1023 / BRT_MAX;
     ledcWrite(BSP_BACKLIGHT_GPIO, pwm);
+}
+
+// ---- LVGL UI callbacks (called from LVGL task context) ----------------------
+static void on_mode_change(uint8_t m) {
+    s_mode_12h = m;
+    save_u8("mode", m);
+    Serial.printf("[UI] mode → %dH\n", m ? 12 : 24);
+}
+
+static void on_brt_change(uint8_t b) {
+    s_brightness = b;
+    set_backlight(b);
+    save_u8("brt", b);
+    Serial.printf("[UI] brightness → %d\n", b);
+}
+
+// ---- Vsync ISR callback — notifies LVGL task --------------------------------
+static IRAM_ATTR bool on_refresh_done(esp_lcd_panel_handle_t panel,
+                                       esp_lcd_dpi_panel_event_data_t *edata,
+                                       void *user_ctx) {
+    return lvgl_port_notify_lcd_vsync();
 }
 
 // ---- Display init -----------------------------------------------------------
@@ -132,7 +131,7 @@ static bool init_display() {
 
     esp_lcd_dpi_panel_config_t dpi_cfg =
         JD9165_1024_600_PANEL_60HZ_DPI_CONFIG(LCD_COLOR_PIXEL_FORMAT_RGB565);
-    dpi_cfg.num_fbs = 1;
+    dpi_cfg.num_fbs = LVGL_PORT_LCD_BUFFER_NUMS;
 
     jd9165_vendor_config_t vendor_cfg = {
         .mipi_config = {
@@ -149,14 +148,13 @@ static bool init_display() {
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
 
+    esp_lcd_dpi_panel_event_callbacks_t cbs = { .on_refresh_done = on_refresh_done };
+    ESP_ERROR_CHECK(esp_lcd_dpi_panel_register_event_callbacks(s_panel, &cbs, NULL));
+
     ledcAttach(BSP_BACKLIGHT_GPIO, 5000, 10);
-    ledcWrite(BSP_BACKLIGHT_GPIO, 1023);  // full bright during splash
+    ledcWrite(BSP_BACKLIGHT_GPIO, 0);  // start dark until LVGL renders first frame
 
-    size_t fb_bytes = LCD_W * LCD_V * sizeof(uint16_t);
-    s_fb = (uint16_t *)heap_caps_malloc(fb_bytes, MALLOC_CAP_SPIRAM);
-    if (!s_fb) { Serial.println("[LCD] PSRAM alloc failed"); return false; }
-
-    Serial.printf("[LCD] OK, fb=%u bytes PSRAM\n", (unsigned)fb_bytes);
+    Serial.println("[LCD] panel OK");
     return true;
 }
 
@@ -208,57 +206,57 @@ static void init_sntp() {
     Serial.println("[NTP] SNTP started");
 }
 
-static bool push_frame() {
-    if (!s_panel || !s_fb) return false;
-    esp_lcd_panel_draw_bitmap(s_panel, 0, 0, LCD_W, LCD_V, s_fb);
-    return true;
+// ---- UI helper: update display with current system state --------------------
+static void update_ui_now() {
+    time_t now_t = time(NULL);
+    struct tm t;
+    localtime_r(&now_t, &t);
+    ui_lvgl_update(&t, s_mode_12h, s_ntp_synced, eth_driver_ip_str(), s_brightness);
 }
 
 // ---- setup() ----------------------------------------------------------------
 void setup() {
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
     delay(1500);
+    Serial.begin(115200);
     Serial.println("=== clock_app starting ===");
 
     nvs_init_clock();
-    s_mode_12h  = load_u8("mode", 0);
+    s_mode_12h   = load_u8("mode", 0);
     s_brightness = load_u8("brt", BRT_DEFAULT);
     if (s_brightness < BRT_MIN) s_brightness = BRT_MIN;
     if (s_brightness > BRT_MAX) s_brightness = BRT_MAX;
 
-    // Display
     if (!init_display()) { Serial.println("[FATAL] display init"); return; }
 
-    // Apply loaded brightness (splash was at full bright)
-    set_backlight(s_brightness);
-
-    // Splash
-    ui_draw_splash(s_fb, "Connecting...");
-    push_frame();
-
-    // Touch
     init_touch();
 
-    // Ethernet
+    ESP_ERROR_CHECK(lvgl_port_init(s_panel, s_tp, LVGL_PORT_INTERFACE_MIPI_DSI_DMA));
+
+    if (lvgl_port_lock(-1)) {
+        ui_lvgl_init(on_mode_change, on_brt_change, s_mode_12h, s_brightness);
+        lvgl_port_unlock();
+    }
+
+    /* Turn backlight on after first LVGL frame is ready */
+    vTaskDelay(pdMS_TO_TICKS(100));
+    set_backlight(s_brightness);
+
     eth_driver_init();
 
     Serial.println("[ETH] waiting for DHCP...");
     for (int i = 0; i < 60 && !eth_driver_got_ip(); i++) {
         delay(1000);
+        update_ui_now();
         if (i % 5 == 4) Serial.printf("[ETH] ...%ds\n", i + 1);
     }
 
     if (!eth_driver_got_ip()) {
-        Serial.println("[ETH] DHCP timeout");
-        ui_draw_splash(s_fb, "No Ethernet!");
-        push_frame();
-        delay(2000);
+        Serial.println("[ETH] DHCP timeout — no NTP");
     } else {
         Serial.printf("[ETH] IP: %s\n", eth_driver_ip_str());
         init_sntp();
 
-        ui_draw_splash(s_fb, "Syncing NTP...");
-        push_frame();
         for (int i = 0; i < NTP_SYNC_TIMEOUT_S; i++) {
             if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
                 s_ntp_synced = true;
@@ -266,6 +264,7 @@ void setup() {
                 break;
             }
             delay(1000);
+            update_ui_now();
         }
         if (!s_ntp_synced) Serial.println("[NTP] timeout — using local clock");
     }
@@ -273,69 +272,10 @@ void setup() {
 
 // ---- loop() -----------------------------------------------------------------
 void loop() {
-    if (!s_fb || !s_panel) { delay(5000); return; }
-
-    // --- Touch handling ---
-    if (s_tp) {
-        esp_lcd_touch_read_data(s_tp);
-        uint16_t tx[1], ty[1];
-        uint8_t cnt = 0;
-        if (esp_lcd_touch_get_coordinates(s_tp, tx, ty, NULL, &cnt, 1) && cnt > 0) {
-            unsigned long now = millis();
-            int px = (int)tx[0], py = (int)ty[0];
-
-            // Mode buttons (bottom area)
-            if (py >= BTN_Y && py < BTN_Y + BTN_H) {
-                if (now - s_last_mode_ms > DEBOUNCE_MODE_MS) {
-                    if (px >= BTN_12H_X1 && px <= BTN_12H_X2 && s_mode_12h != 1) {
-                        s_mode_12h = 1;
-                        save_u8("mode", s_mode_12h);
-                        Serial.println("[TOUCH] → 12H");
-                        s_last_mode_ms = now;
-                    } else if (px >= BTN_24H_X1 && px <= BTN_24H_X2 && s_mode_12h != 0) {
-                        s_mode_12h = 0;
-                        save_u8("mode", s_mode_12h);
-                        Serial.println("[TOUCH] → 24H");
-                        s_last_mode_ms = now;
-                    }
-                }
-            }
-
-            // Brightness buttons (status bar top area)
-            if (py < SBAR_H) {
-                if (now - s_last_brt_ms > DEBOUNCE_BRT_MS) {
-                    if (px >= BRT_MINUS_X1 && px <= BRT_MINUS_X2 && s_brightness > BRT_MIN) {
-                        s_brightness--;
-                        set_backlight(s_brightness);
-                        save_u8("brt", s_brightness);
-                        Serial.printf("[TOUCH] brightness → %d\n", s_brightness);
-                        s_last_brt_ms = now;
-                    } else if (px >= BRT_PLUS_X1 && px <= BRT_PLUS_X2 && s_brightness < BRT_MAX) {
-                        s_brightness++;
-                        set_backlight(s_brightness);
-                        save_u8("brt", s_brightness);
-                        Serial.printf("[TOUCH] brightness → %d\n", s_brightness);
-                        s_last_brt_ms = now;
-                    }
-                }
-            }
-        }
-    }
-
-    // NTP sync check (ongoing after boot)
     if (!s_ntp_synced && sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
         s_ntp_synced = true;
         Serial.println("[NTP] synced");
     }
-
-    // Get local time and render
-    struct tm timeinfo;
-    time_t now_t = time(NULL);
-    localtime_r(&now_t, &timeinfo);
-
-    ui_draw_frame(s_fb, &timeinfo, s_mode_12h, s_ntp_synced,
-                  eth_driver_ip_str(), s_brightness);
-    push_frame();
-
+    update_ui_now();
     delay(LOOP_DELAY_MS);
 }
