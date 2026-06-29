@@ -106,6 +106,19 @@ lvgl_port_unlock();
 
 The vsync ISR calls `lv_display_flush_ready()` to signal frame completion — do not flush manually.
 
+## Custom Fonts
+
+Hai font được generate từ `https://lvgl.io/tools/fontconverter` với Montserrat TTF (Google Fonts):
+
+| File | Name | Size | Bpp | Symbols |
+|---|---|---|---|---|
+| `src/lv_font_clock_128.c` | `lv_font_clock_128` | 128pt | 4 | `0123456789: APM` |
+| `src/lv_font_date_48.c` | `lv_font_date_48` | 48pt | 4 | `A-Z a-z 0-9 space ,.` |
+
+**Tái tạo font:** Upload `Montserrat-Regular.ttf`, điền Name/Size/Bpp/Symbols như bảng trên, Output format = `C file`, download `.c` → copy vào `src/` ghi đè.
+
+**Không dùng `lv_obj_set_style_transform_scale`** — nearest-neighbor scaling gây pixel vỡ ở scale cao. Native font vector luôn sharp.
+
 ## Design Decisions Worth Knowing
 
 - **PSRAM for LVGL**: Internal SRAM is scarce; all LVGL objects go to PSRAM via the custom allocator in `lv_mem_psram.cpp`. Changing `lv_conf.h` memory settings requires matching changes there.
